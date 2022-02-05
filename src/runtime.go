@@ -1074,7 +1074,7 @@ func main() {
 	if len(os.Args) <= 1 {
 		mem.node = append(mem.node, Cal(0, _MAIN_, 0))
 	} else {
-		mem.node = append(mem.node, Cal(len(os.Args)-1, _MAIN_, 1))
+		mem.node = append(mem.node, Cal(u64(len(os.Args)-1), _MAIN_, 1))
 		for _, arg := range os.Args[1:] {
 			mem.node = append(mem.node, parse_arg(arg, id_to_name_data))
 		}

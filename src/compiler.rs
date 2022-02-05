@@ -35,8 +35,8 @@ pub fn compile_book(comp: &rb::RuleBook) -> String {
   let mut inits = String::new();
   let mut codes = String::new();
   let mut id2nm = String::new();
-  for (id, name) in &comp.id_to_name {
-    line(&mut id2nm, 1, &format!(r#"id_to_name_data[{}] = "{}";"#, id, name));
+  for (_id, name) in &comp.id_to_name {
+    line(&mut id2nm, 1, &format!(r#""{}","#, name));
   }
   for (name, (_arity, rules)) in &comp.func_rules {
     let (init, code) = compile_func(comp, rules, 7, &mut dups);
@@ -44,17 +44,17 @@ pub fn compile_book(comp: &rb::RuleBook) -> String {
     line(
       &mut c_ids,
       0,
-      &format!("const u64 {} = {};", &compile_name(name), comp.name_to_id.get(name).unwrap_or(&0)),
+      &format!("const {} u64 = {}", &compile_name(name), comp.name_to_id.get(name).unwrap_or(&0)),
     );
 
-    line(&mut inits, 6, &format!("case {}: {{", &compile_name(name)));
+    line(&mut inits, 6, &format!("case {}: ", &compile_name(name)));
     inits.push_str(&init);
-    line(&mut inits, 6, "};");
+    line(&mut inits, 6, "");
 
-    line(&mut codes, 6, &format!("case {}: {{", &compile_name(name)));
+    line(&mut codes, 6, &format!("case {}: ", &compile_name(name)));
     codes.push_str(&code);
-    line(&mut codes, 7, "break;");
-    line(&mut codes, 6, "};");
+    line(&mut codes, 7, "break");
+    line(&mut codes, 6, "");
   }
 
   c_runtime_template(&c_ids, &inits, &codes, &id2nm, comp.id_to_name.len() as u64)
@@ -82,20 +82,20 @@ pub fn compile_func(
   }
 
   // Computes the initializer, which calls reduce recursivelly
-  line(&mut init, tab + 0, &format!("if (get_ari(term) == {}) {{", dynfun.redex.len()));
+  line(&mut init, tab + 0, &format!("if get_ari(term) == {} {{", dynfun.redex.len()));
   if stricts.is_empty() {
-    line(&mut init, tab + 1, "init = 0;");
+    line(&mut init, tab + 1, "init = 0");
   } else {
-    line(&mut init, tab + 1, "stk_push(&stack, host);");
+    line(&mut init, tab + 1, "stk_push(stack, u64(host))");
     for (i, strict) in stricts.iter().enumerate() {
       if i < stricts.len() - 1 {
         line(
           &mut init,
           tab + 1,
-          &format!("stk_push(&stack, get_loc(term, {}) | 0x80000000);", strict),
+          &format!("stk_push(stack, u64(get_loc(term, {}) | 0x80000000))", strict),
         );
       } else {
-        line(&mut init, tab + 1, &format!("host = get_loc(term, {});", strict));
+        line(&mut init, tab + 1, &format!("host = u32(get_loc(term, {}))", strict));
       }
     }
   }
@@ -105,11 +105,11 @@ pub fn compile_func(
   // Applies the cal_par rule to superposed args
   for (i, is_redex) in dynfun.redex.iter().enumerate() {
     if *is_redex {
-      line(&mut code, tab + 0, &format!("if (get_tag(ask_arg(mem,term,{})) == PAR) {{", i));
+      line(&mut code, tab + 0, &format!("if get_tag(Lnk(ask_arg(mem,term,{}))) == PAR {{", i));
       line(
         &mut code,
         tab + 1,
-        &format!("cal_par(mem, host, term, ask_arg(mem, term, {}), {});", i, i),
+        &format!("cal_par(mem, u64(host), term, Lnk(ask_arg(mem, term, {})), {})", i, i),
       );
       line(&mut code, tab + 1, "continue;");
       line(&mut code, tab + 0, "}");
@@ -124,51 +124,51 @@ pub fn compile_func(
     for (i, cond) in dynrule.cond.iter().enumerate() {
       let i = i as u64;
       if rt::get_tag(*cond) == rt::U32 {
-        let same_tag = format!("get_tag(ask_arg(mem, term, {})) == U32", i);
-        let same_val = format!("get_val(ask_arg(mem, term, {})) == {}u", i, rt::get_val(*cond));
-        matched.push(format!("({} && {})", same_tag, same_val));
+        let same_tag = format!("get_tag(Lnk(ask_arg(mem, term, {}))) == U32", i);
+        let same_val = format!("get_val(Lnk(ask_arg(mem, term, {}))) == {}", i, rt::get_val(*cond));
+        matched.push(format!("{} && {}", same_tag, same_val));
       }
       if rt::get_tag(*cond) == rt::CTR {
-        let some_tag = format!("get_tag(ask_arg(mem, term, {})) == CTR", i);
-        let some_ext = format!("get_ext(ask_arg(mem, term, {})) == {}u", i, rt::get_ext(*cond));
-        matched.push(format!("({} && {})", some_tag, some_ext));
+        let some_tag = format!("get_tag(Lnk(ask_arg(mem, term, {}))) == CTR", i);
+        let some_ext = format!("get_ext(Lnk(ask_arg(mem, term, {}))) == {}", i, rt::get_ext(*cond));
+        matched.push(format!("{} && {}", some_tag, some_ext));
       }
     }
 
-    let conds = if matched.is_empty() { String::from("1") } else { matched.join(" && ") };
-    line(&mut code, tab + 0, &format!("if ({}) {{", conds));
+    let conds = if matched.is_empty() { String::from("true") } else { matched.join(" && ") };
+    line(&mut code, tab + 0, &format!("if {} {{", conds));
 
     // Increments the gas count
-    line(&mut code, tab + 1, "inc_cost(mem);");
+    line(&mut code, tab + 1, "inc_cost(mem)");
 
     // Builds the right-hand side term (ex: `(Succ (Add a b))`)
     //let done = compile_func_rule_body(&mut code, tab + 1, &dynrule.body, &dynrule.vars);
     let done = compile_func_rule_term(&mut code, tab + 1, &dynrule.term, &dynrule.vars, dups);
-    line(&mut code, tab + 1, &format!("u64 done = {};", done));
+    line(&mut code, tab + 1, &format!("done := {}", done));
 
     // Links the host location to it
-    line(&mut code, tab + 1, "link(mem, host, done);");
+    line(&mut code, tab + 1, "link(mem, u64(host), Lnk(done))");
 
     // Clears the matched ctrs (the `(Succ ...)` and the `(Add ...)` ctrs)
-    line(&mut code, tab + 1, &format!("clear(mem, get_loc(term, 0), {});", dynfun.redex.len()));
+    line(&mut code, tab + 1, &format!("clear(mem, get_loc(term, 0), {})", dynfun.redex.len()));
     for (i, arity) in &dynrule.free {
       let i = *i as u64;
       line(
         &mut code,
         tab + 1,
-        &format!("clear(mem, get_loc(ask_arg(mem, term, {}), 0), {});", i, arity),
+        &format!("clear(mem, get_loc(Lnk(ask_arg(mem, term, {})), 0), {})", i, arity),
       );
     }
 
     // Collects unused variables (none in this example)
     for dynvar @ bd::DynVar { param: _, field: _, erase } in dynrule.vars.iter() {
       if *erase {
-        line(&mut code, tab + 1, &format!("collect(mem, {});", get_var(dynvar)));
+        line(&mut code, tab + 1, &format!("collect(mem, {})", get_var(dynvar)));
       }
     }
 
-    line(&mut code, tab + 1, "init = 1;");
-    line(&mut code, tab + 1, "continue;");
+    line(&mut code, tab + 1, "init = 1");
+    line(&mut code, tab + 1, "continue");
 
     line(&mut code, tab + 0, "}");
   }
@@ -211,31 +211,31 @@ pub fn compile_func_rule_term(
         let dup0 = fresh(nams, "dp0");
         let dup1 = fresh(nams, "dp1");
         let expr = go(code, tab, expr, vars, nams, dups);
-        line(code, tab, &format!("u64 {} = {};", copy, expr));
-        line(code, tab, &format!("u64 {};", dup0));
-        line(code, tab, &format!("u64 {};", dup1));
+        line(code, tab, &format!("var {} u64 = {}", copy, expr));
+        line(code, tab, &format!("var {} u64", dup0));
+        line(code, tab, &format!("var {} u64", dup1));
         if INLINE_NUMBERS {
-          line(code, tab + 0, &format!("if (get_tag({}) == U32) {{", copy));
-          line(code, tab + 1, "inc_cost(mem);");
-          line(code, tab + 1, &format!("{} = {};", dup0, copy));
-          line(code, tab + 1, &format!("{} = {};", dup1, copy));
+          line(code, tab + 0, &format!("if get_tag(Lnk({})) == U32 {{", copy));
+          line(code, tab + 1, "inc_cost(mem)");
+          line(code, tab + 1, &format!("{} = {}", dup0, copy));
+          line(code, tab + 1, &format!("{} = {}", dup1, copy));
           line(code, tab + 0, "} else {");
         }
         let name = fresh(nams, "dup");
         let coln = fresh(nams, "col");
         let colx = *dups;
         *dups += 1;
-        line(code, tab + 1, &format!("u64 {} = alloc(mem, 3);", name));
-        line(code, tab + 1, &format!("u64 {} = {};", coln, colx));
+        line(code, tab + 1, &format!("var {} u64 = alloc(mem, 3)", name));
+        line(code, tab + 1, &format!("var {} u64 = {}", coln, colx));
         if eras.0 {
-          line(code, tab + 1, &format!("link(mem, {} + 0, Era());", name));
+          line(code, tab + 1, &format!("link(mem, {} + 0, Era())", name));
         }
         if eras.1 {
-          line(code, tab + 1, &format!("link(mem, {} + 1, Era());", name));
+          line(code, tab + 1, &format!("link(mem, {} + 1, Era())", name));
         }
-        line(code, tab + 1, &format!("link(mem, {} + 2, {});", name, copy));
-        line(code, tab + 1, &format!("{} = Dp0({}, {});", dup0, colx, name));
-        line(code, tab + 1, &format!("{} = Dp1({}, {});", dup1, colx, name));
+        line(code, tab + 1, &format!("link(mem, {} + 2, Lnk({}))", name, copy));
+        line(code, tab + 1, &format!("{} = u64(Dp0({}, {}))", dup0, colx, name));
+        line(code, tab + 1, &format!("{} = u64(Dp1({}, {}))", dup1, colx, name));
         if INLINE_NUMBERS {
           line(code, tab + 0, "}");
         }
@@ -255,32 +255,32 @@ pub fn compile_func_rule_term(
       }
       bd::DynTerm::Lam { eras, body } => {
         let name = fresh(nams, "lam");
-        line(code, tab, &format!("u64 {} = alloc(mem, 2);", name));
+        line(code, tab, &format!("var {} u64 = alloc(mem, 2)", name));
         vars.push(format!("Var({})", name));
         let body = go(code, tab, body, vars, nams, dups);
         vars.pop();
         if *eras {
-          line(code, tab, &format!("link(mem, {} + 0, Era());", name));
+          line(code, tab, &format!("link(mem, {} + 0, Era())", name));
         }
-        line(code, tab, &format!("link(mem, {} + 1, {});", name, body));
+        line(code, tab, &format!("link(mem, {} + 1, Lnk({}))", name, body));
         format!("Lam({})", name)
       }
       bd::DynTerm::App { func, argm } => {
         let name = fresh(nams, "app");
         let func = go(code, tab, func, vars, nams, dups);
         let argm = go(code, tab, argm, vars, nams, dups);
-        line(code, tab, &format!("u64 {} = alloc(mem, 2);", name));
-        line(code, tab, &format!("link(mem, {} + 0, {});", name, func));
-        line(code, tab, &format!("link(mem, {} + 1, {});", name, argm));
+        line(code, tab, &format!("var {} u64 = alloc(mem, 2)", name));
+        line(code, tab, &format!("link(mem, {} + 0, Lnk({}))", name, func));
+        line(code, tab, &format!("link(mem, {} + 1, Lnk({}))", name, argm));
         format!("App({})", name)
       }
       bd::DynTerm::Ctr { func, args } => {
         let ctr_args: Vec<String> =
           args.iter().map(|arg| go(code, tab, arg, vars, nams, dups)).collect();
         let name = fresh(nams, "ctr");
-        line(code, tab, &format!("u64 {} = alloc(mem, {});", name, ctr_args.len()));
+        line(code, tab, &format!("var {} u64 = alloc(mem, {})", name, ctr_args.len()));
         for (i, arg) in ctr_args.iter().enumerate() {
-          line(code, tab, &format!("link(mem, {} + {}, {});", name, i, arg));
+          line(code, tab, &format!("link(mem, {} + {}, Lnk({}))", name, i, arg));
         }
         format!("Ctr({}, {}, {})", ctr_args.len(), func, name)
       }
@@ -288,9 +288,9 @@ pub fn compile_func_rule_term(
         let cal_args: Vec<String> =
           args.iter().map(|arg| go(code, tab, arg, vars, nams, dups)).collect();
         let name = fresh(nams, "cal");
-        line(code, tab, &format!("u64 {} = alloc(mem, {});", name, cal_args.len()));
+        line(code, tab, &format!("var {} u64 = alloc(mem, {})", name, cal_args.len()));
         for (i, arg) in cal_args.iter().enumerate() {
-          line(code, tab, &format!("link(mem, {} + {}, {});", name, i, arg));
+          line(code, tab, &format!("link(mem, {} + {}, Lnk({}))", name, i, arg));
         }
         format!("Cal({}, {}, {})", cal_args.len(), func, name)
       }
@@ -302,41 +302,41 @@ pub fn compile_func_rule_term(
         let name = fresh(nams, "op2");
         let val0 = go(code, tab, val0, vars, nams, dups);
         let val1 = go(code, tab, val1, vars, nams, dups);
-        line(code, tab + 0, &format!("u64 {};", retx));
+        line(code, tab + 0, &format!("var {} u64", retx));
         // Optimization: do inline operation, avoiding Op2 allocation, when operands are already number
         if INLINE_NUMBERS {
           line(
             code,
             tab + 0,
-            &format!("if (get_tag({}) == U32 && get_tag({}) == U32) {{", val0, val1),
+            &format!("if get_tag(Lnk({})) == U32 && get_tag(Lnk({})) == U32 {{", val0, val1),
           );
-          let a = format!("get_val({})", val0);
-          let b = format!("get_val({})", val1);
+          let a = format!("get_val(Lnk({}))", val0);
+          let b = format!("get_val(Lnk({}))", val1);
           match *oper {
-            rt::ADD => line(code, tab + 1, &format!("{} = U_32({} + {});", retx, a, b)),
-            rt::SUB => line(code, tab + 1, &format!("{} = U_32({} - {});", retx, a, b)),
-            rt::MUL => line(code, tab + 1, &format!("{} = U_32({} * {});", retx, a, b)),
-            rt::DIV => line(code, tab + 1, &format!("{} = U_32({} / {});", retx, a, b)),
-            rt::MOD => line(code, tab + 1, &format!("{} = U_32({} % {});", retx, a, b)),
-            rt::AND => line(code, tab + 1, &format!("{} = U_32({} & {});", retx, a, b)),
-            rt::OR => line(code, tab + 1, &format!("{} = U_32({} | {});", retx, a, b)),
-            rt::XOR => line(code, tab + 1, &format!("{} = U_32({} ^ {});", retx, a, b)),
-            rt::SHL => line(code, tab + 1, &format!("{} = U_32({} << {});", retx, a, b)),
-            rt::SHR => line(code, tab + 1, &format!("{} = U_32({} >> {});", retx, a, b)),
-            rt::LTN => line(code, tab + 1, &format!("{} = U_32({} <  {} ? 1 : 0);", retx, a, b)),
-            rt::LTE => line(code, tab + 1, &format!("{} = U_32({} <= {} ? 1 : 0);", retx, a, b)),
-            rt::EQL => line(code, tab + 1, &format!("{} = U_32({} == {} ? 1 : 0);", retx, a, b)),
-            rt::GTE => line(code, tab + 1, &format!("{} = U_32({} >= {} ? 1 : 0);", retx, a, b)),
-            rt::GTN => line(code, tab + 1, &format!("{} = U_32({} >  {} ? 1 : 0);", retx, a, b)),
-            rt::NEQ => line(code, tab + 1, &format!("{} = U_32({} != {} ? 1 : 0);", retx, a, b)),
-            _ => line(code, tab + 1, &format!("{} = ?;", retx)),
+            rt::ADD => line(code, tab + 1, &format!("{} = u64(U_32({} + {}))", retx, a, b)),
+            rt::SUB => line(code, tab + 1, &format!("{} = u64(U_32({} - {}))", retx, a, b)),
+            rt::MUL => line(code, tab + 1, &format!("{} = u64(U_32({} * {}))", retx, a, b)),
+            rt::DIV => line(code, tab + 1, &format!("{} = u64(U_32({} / {}))", retx, a, b)),
+            rt::MOD => line(code, tab + 1, &format!("{} = u64(U_32({} % {}))", retx, a, b)),
+            rt::AND => line(code, tab + 1, &format!("{} = u64(U_32({} & {}))", retx, a, b)),
+            rt::OR  => line(code, tab + 1, &format!("{} = u64(U_32({} | {}))", retx, a, b)),
+            rt::XOR => line(code, tab + 1, &format!("{} = u64(U_32({} ^ {}))", retx, a, b)),
+            rt::SHL => line(code, tab + 1, &format!("{} = u64(U_32({} << {}))", retx, a, b)),
+            rt::SHR => line(code, tab + 1, &format!("{} = u64(U_32({} >> {}))", retx, a, b)),
+            rt::LTN => line(code, tab + 1, &format!("if {} <  {} {{ {} = u64(U_32(1)) }} else {{ {} = u64(U_32(0)) }}", a, b, retx, retx)),
+            rt::LTE => line(code, tab + 1, &format!("if {} <= {} {{ {} = u64(U_32(1)) }} else {{ {} = u64(U_32(0)) }}", a, b, retx, retx)),
+            rt::EQL => line(code, tab + 1, &format!("if {} == {} {{ {} = u64(U_32(1)) }} else {{ {} = u64(U_32(0)) }}", a, b, retx, retx)),
+            rt::GTE => line(code, tab + 1, &format!("if {} >= {} {{ {} = u64(U_32(1)) }} else {{ {} = u64(U_32(0)) }}", a, b, retx, retx)),
+            rt::GTN => line(code, tab + 1, &format!("if {} >  {} {{ {} = u64(U_32(1)) }} else {{ {} = u64(U_32(0)) }}", a, b, retx, retx)),
+            rt::NEQ => line(code, tab + 1, &format!("if {} != {} {{ {} = u64(U_32(1)) }} else {{ {} = u64(U_32(0)) }}", a, b, retx, retx)),
+            _ => line(code, tab + 1, &format!("{} = ?", retx)),
           }
-          line(code, tab + 1, "inc_cost(mem);");
+          line(code, tab + 1, "inc_cost(mem)");
           line(code, tab + 0, "} else {");
         }
-        line(code, tab + 1, &format!("u64 {} = alloc(mem, 2);", name));
-        line(code, tab + 1, &format!("link(mem, {} + 0, {});", name, val0));
-        line(code, tab + 1, &format!("link(mem, {} + 1, {});", name, val1));
+        line(code, tab + 1, &format!("var {} u64 = alloc(mem, 2)", name));
+        line(code, tab + 1, &format!("link(mem, {} + 0, Lnk({}))", name, val0));
+        line(code, tab + 1, &format!("link(mem, {} + 1, Lnk({}))", name, val1));
         let oper_name = match *oper {
           rt::ADD => "ADD",
           rt::SUB => "SUB",
@@ -356,7 +356,7 @@ pub fn compile_func_rule_term(
           rt::NEQ => "NEQ",
           _ => "?",
         };
-        line(code, tab + 1, &format!("{} = Op2({}, {});", retx, oper_name, name));
+        line(code, tab + 1, &format!("{} = u64(Op2({}, {}))", retx, oper_name, name));
         if INLINE_NUMBERS {
           line(code, tab + 0, "}");
         }
@@ -374,7 +374,7 @@ pub fn compile_func_rule_term(
     .iter()
     .map(|_var @ bd::DynVar { param, field, erase: _ }| match field {
       Some(field) => {
-        format!("ask_arg(mem, ask_arg(mem, term, {}), {})", param, field)
+        format!("ask_arg(mem, Lnk(ask_arg(mem, term, {})), {})", param, field)
       }
       None => {
         format!("ask_arg(mem, term, {})", param)
@@ -396,21 +396,21 @@ pub fn compile_func_rule_body(
 ) -> String {
   let (elem, nodes) = body;
   for (i, node) in nodes.iter().enumerate() {
-    line(code, tab + 0, &format!("u64 loc_{} = alloc(mem, {});", i, node.len()));
+    line(code, tab + 0, &format!("var loc_{} u64 = alloc(mem, {})", i, node.len()));
   }
   for (i, node) in nodes.iter().enumerate() {
     for (j, element) in node.iter().enumerate() {
       match element {
         bd::Elem::Fix { value } => {
           //mem.node[(host + j) as usize] = *value;
-          line(code, tab + 0, &format!("mem->node[loc_{} + {}] = {:#x}u;", i, j, value));
+          line(code, tab + 0, &format!("mem.node[loc_{} + {}] = {:#x}u", i, j, value));
         }
         bd::Elem::Ext { index } => {
           //rt::link(mem, host + j, get_var(mem, term, &vars[*index as usize]));
           line(
             code,
             tab + 0,
-            &format!("link(mem, loc_{} + {}, {});", i, j, get_var(&vars[*index as usize])),
+            &format!("link(mem, loc_{} + {}, Lnk({}))", i, j, get_var(&vars[*index as usize])),
           );
           //line(code, tab + 0, &format!("u64 lnk = {};", get_var(&vars[*index as usize])));
           //line(code, tab + 0, &format!("u64 tag = get_tag(lnk);"));
@@ -422,7 +422,7 @@ pub fn compile_func_rule_body(
           line(
             code,
             tab + 0,
-            &format!("mem->node[loc_{} + {}] = {:#x}u + loc_{} + {};", i, j, value, targ, slot),
+            &format!("mem.node[loc_{} + {}] = {:#x}u + loc_{} + {}", i, j, value, targ, slot),
           );
         }
       }
@@ -462,7 +462,7 @@ pub fn c_runtime_template(
   id2nm: &str,
   names_count: u64,
 ) -> String {
-  const C_RUNTIME_TEMPLATE: &str = include_str!("runtime.c");
+  const C_RUNTIME_TEMPLATE: &str = include_str!("runtime.go");
   const C_CONSTRUCTOR_IDS_CONTENT: &str = "/* GENERATED_CONSTRUCTOR_IDS_CONTENT */";
   const C_REWRITE_RULES_STEP_0_CONTENT: &str = "/* GENERATED_REWRITE_RULES_STEP_0_CONTENT */";
   const C_REWRITE_RULES_STEP_1_CONTENT: &str = "/* GENERATED_REWRITE_RULES_STEP_1_CONTENT */";
