@@ -1003,7 +1003,7 @@ func readback(code_mcap u64, mem *Worker, term Lnk, id_to_name_data []string) st
 	readback_term(chrs, mem, term, vars, dirs, id_to_name_data)
 	code_data := ""
 	for i := 0; i < len(chrs); i++ {
-		code_data += string(chrs[i])
+		code_data += fmt.Sprint(chrs[i])
 	}
 	return code_data
 }

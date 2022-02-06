@@ -86,13 +86,13 @@ pub fn compile_func(
   if stricts.is_empty() {
     line(&mut init, tab + 1, "init = 0");
   } else {
-    line(&mut init, tab + 1, "stk_push(stack, u64(host))");
+    line(&mut init, tab + 1, "stack = append(stack, u64(host))");
     for (i, strict) in stricts.iter().enumerate() {
       if i < stricts.len() - 1 {
         line(
           &mut init,
           tab + 1,
-          &format!("stk_push(stack, u64(get_loc(term, {}) | 0x80000000))", strict),
+          &format!("stack = append(stack, u64(get_loc(term, {}) | 0x80000000))", strict),
         );
       } else {
         line(&mut init, tab + 1, &format!("host = u32(get_loc(term, {}))", strict));
