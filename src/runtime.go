@@ -21,9 +21,9 @@ const (
 	U64_PER_MB u64 = 0x20000
 	U64_PER_GB u64 = 0x8000000
 
-	HEAP_SIZE        u64 = 8 * U64_PER_GB * u64(unsafe.Sizeof(u64(0)))
+	HEAP_SIZE        u64 = U64_PER_GB * u64(unsafe.Sizeof(u64(0)))
 	MEM_SPACE        u64 = HEAP_SIZE / MAX_WORKERS / u64(unsafe.Sizeof(u64(0)))
-	NORMAL_SEEN_MCAP u64 = HEAP_SIZE / u64(unsafe.Sizeof(u64(0))) / (u64(unsafe.Sizeof(u64(0))) * 8)
+	NORMAL_SEEN_MCAP u64 = MEM_SPACE / MAX_WORKERS
 )
 
 // stubs for testing
@@ -224,7 +224,6 @@ func link(mem *Worker, loc u64, lnk Lnk) u64 {
 			mem.node[get_loc(lnk, 1)] = Arg(loc)
 		} else {
 			mem.node[get_loc(lnk, 0)] = Arg(loc)
-
 		}
 	}
 	return u64(lnk)
@@ -638,9 +637,7 @@ func get_bit(bits []u64, bit u64) u8 {
 }
 
 func normal_init() {
-	for i := 0; i < len(normal_seen_data); i++ {
-		normal_seen_data[i] = 0
-	}
+	normal_seen_data = map[u64]bool{}
 }
 
 func normal(mem *Worker, host, sidx, slen u64) Lnk {
@@ -699,7 +696,7 @@ func worker(tid u64) {
 		host := (work >> 0) & 0xFFFFFFFF
 		workers[tid].has_result = u64(normal_go(&workers[tid], host, sidx, slen))
 		workers[tid].has_work = math.MaxUint64
-		workers[tid].has_work_signal.Signal()
+		workers[tid].has_result_signal.Signal()
 		workers[tid].has_work_mutex.Unlock()
 	}
 	WG.Done()
@@ -714,10 +711,10 @@ func ffi_normal(mem_data []Lnk, host u32) {
 		}
 		workers[t].has_work = math.MaxUint64
 		workers[t].has_work_mutex = sync.Mutex{}
-		workers[t].has_work_signal = sync.Cond{}
+		workers[t].has_work_signal = *sync.NewCond(&workers[t].has_work_mutex)
 		workers[t].has_result = math.MaxUint64
 		workers[t].has_result_mutex = sync.Mutex{}
-		workers[t].has_result_signal = sync.Cond{}
+		workers[t].has_result_signal = *sync.NewCond(&workers[t].has_result_mutex)
 		WG.Add(1)
 		go worker(t)
 	}
@@ -740,62 +737,53 @@ func ffi_normal(mem_data []Lnk, host u32) {
 	}
 }
 
-var normal_seen_data []u64 = make([]u64, NORMAL_SEEN_MCAP)
+var normal_seen_data = map[u64]bool{}
 
 func normal_go(mem *Worker, host, sidx, slen u64) Lnk {
 	term := ask_lnk(mem, host)
-	if get_bit(normal_seen_data, host) != 0 {
+	if normal_seen_data[host] {
 		return term
 	}
 	term = reduce(mem, host, slen)
-	set_bit(normal_seen_data, host)
-	rec_size := u64(0)
-	rec_locs := [16]u64{}
+	normal_seen_data[host] = true
+	// rec_size := u64(0)
+	rec_locs := []u64{}
 	switch get_tag(term) {
 	case LAM:
-		rec_locs[rec_size] = get_loc(term, 1)
-		rec_size++
+		rec_locs = append(rec_locs, get_loc(term, 1))
 	case APP:
-		rec_locs[rec_size] = get_loc(term, 0)
-		rec_size++
-		rec_locs[rec_size] = get_loc(term, 1)
-		rec_size++
+		rec_locs = append(rec_locs, get_loc(term, 0))
+		rec_locs = append(rec_locs, get_loc(term, 1))
 	case PAR:
-		rec_locs[rec_size] = get_loc(term, 0)
-		rec_size++
-		rec_locs[rec_size] = get_loc(term, 1)
-		rec_size++
+		rec_locs = append(rec_locs, get_loc(term, 0))
+		rec_locs = append(rec_locs, get_loc(term, 1))
 	case DP0:
-		rec_locs[rec_size] = get_loc(term, 2)
-		rec_size++
+		rec_locs = append(rec_locs, get_loc(term, 2))
 	case DP1:
-		rec_locs[rec_size] = get_loc(term, 2)
-		rec_size++
+		rec_locs = append(rec_locs, get_loc(term, 2))
 	case OP2:
 		if slen > 1 {
-			rec_locs[rec_size] = get_loc(term, 1)
-			rec_size++
+			rec_locs = append(rec_locs, get_loc(term, 1))
 		}
 	case CTR:
 	case CAL:
 		ari := get_ari(term)
 		for i := u64(0); i < ari; i++ {
-			rec_locs[rec_size] = get_loc(term, i)
-			rec_size++
+			rec_locs = append(rec_locs, get_loc(term, i))
 		}
 	}
 
-	if rec_size > 2 && slen >= rec_size {
-		space := slen / rec_size
-		for i := u64(0); i < rec_size; i++ {
+	if len(rec_locs) > 2 && slen >= u64(len(rec_locs)) {
+		space := slen / u64(len(rec_locs))
+		for i := u64(0); i < u64(len(rec_locs)); i++ {
 			normal_fork(sidx+i*space, rec_locs[i], sidx+i*space, space)
 		}
 		link(mem, rec_locs[0], normal_go(mem, rec_locs[0], sidx, space))
-		for i := u64(1); i < rec_size; i++ {
+		for i := u64(1); i < u64(len(rec_locs)); i++ {
 			link(mem, get_loc(term, i), Lnk(normal_join(sidx+i*space)))
 		}
 	} else {
-		for i := u64(0); i < rec_size; i++ {
+		for i := u64(0); i < u64(len(rec_locs)); i++ {
 			link(mem, rec_locs[i], normal_go(mem, rec_locs[i], sidx, slen))
 		}
 	}
@@ -1071,7 +1059,7 @@ func main() {
 		/* GENERATED_ID_TO_NAME_DATA_CONTENT */
 	}
 	// builds main term
-	mem.node = make([]Lnk, HEAP_SIZE)
+	mem.node = make([]Lnk, HEAP_SIZE/MAX_WORKERS)
 	if len(os.Args) <= 1 {
 		mem.node = append(mem.node, Cal(0, _MAIN_, 0))
 	} else {
