@@ -114,10 +114,11 @@ func stk_init(stack Stk) {
 	stack = make(Stk, stk_growth_factor)
 	return
 }
-func stk_push(stack Stk, value u64) {
-	stack = append(stack, value)
-	return
-}
+
+// func stk_push(stack Stk, value u64) {
+// 	stack = append(stack, value)
+// 	return
+// }
 func stk_pop(stack Stk) u64 {
 	if len(stack) == 0 {
 		return u64(math.MaxUint64)
@@ -242,7 +243,7 @@ func alloc(mem *Worker, size u64) u64 {
 }
 
 func clear(mem *Worker, loc u64, size u64) {
-	stk_push(mem.free[size], loc)
+	mem.free[size] = append(mem.free[size], loc)
 }
 
 func collect(mem *Worker, term Lnk) {
@@ -339,7 +340,7 @@ func reduce(mem *Worker, root, slen u64) Lnk {
 		if init == 1 {
 			switch get_tag(term) {
 			case APP:
-				stk_push(stack, u64(host))
+				stack = append(stack, u64(host))
 				init = 1
 				host = u32(get_loc(term, 0))
 				continue
@@ -352,13 +353,13 @@ func reduce(mem *Worker, root, slen u64) Lnk {
 				if !flag.CompareAndSwap(flag, flag1) {
 					continue
 				}
-				stk_push(stack, u64(host))
+				stack = append(stack, u64(host))
 				host = u32(get_loc(term, 2))
 				continue
 			case OP2:
 				if slen == 1 || len(stack) > 0 {
-					stk_push(stack, u64(host))
-					stk_push(stack, get_loc(term, 0)|0x80000000)
+					stack = append(stack, u64(host))
+					stack = append(stack, get_loc(term, 0)|0x80000000)
 					host = u32(get_loc(term, 1))
 					continue
 				}
@@ -806,13 +807,13 @@ func readback_vars(vars Stk, mem *Worker, term Lnk, seen Stk) {
 	if stk_find(seen, u64(term)) != math.MaxUint64 {
 		return
 	}
-	stk_push(seen, u64(term))
+	seen = append(seen, u64(term))
 	switch get_tag(term) {
 	case LAM:
 		argm := ask_arg(mem, term, 0)
 		body := ask_arg(mem, term, 1)
 		if get_tag(Lnk(argm)) != ERA {
-			stk_push(vars, u64(Var(get_loc(term, 0))))
+			vars = append(vars, u64(Var(get_loc(term, 0))))
 		}
 		readback_vars(vars, mem, Lnk(body), seen)
 	case APP:
@@ -848,13 +849,13 @@ func readback_vars(vars Stk, mem *Worker, term Lnk, seen Stk) {
 func readback_decimal_go(chrs Stk, n u64) {
 	if n > 0 {
 		readback_decimal_go(chrs, n/10)
-		stk_push(chrs, '0'+n%10)
+		chrs = append(chrs, '0'+n%10)
 	}
 }
 
 func readback_decimal(chrs Stk, n u64) {
 	if n == 0 {
-		stk_push(chrs, 0)
+		chrs = append(chrs, 0)
 	} else {
 		readback_decimal_go(chrs, n)
 	}
@@ -863,22 +864,22 @@ func readback_decimal(chrs Stk, n u64) {
 func readback_term(chrs Stk, mem *Worker, term Lnk, vars Stk, dirs []Stk, id_to_name_data []string) {
 	switch get_tag(term) {
 	case LAM:
-		stk_push(chrs, '%')
+		chrs = append(chrs, '%')
 		if get_tag(Lnk(ask_arg(mem, term, 0))) == ERA {
-			stk_push(chrs, '_')
+			chrs = append(chrs, '_')
 		} else {
-			stk_push(chrs, 'x')
+			chrs = append(chrs, 'x')
 			readback_decimal(chrs, stk_find(vars, u64(Var(get_loc(term, 0)))))
 		}
-		stk_push(chrs, ' ')
+		chrs = append(chrs, ' ')
 		readback_term(chrs, mem, Lnk(ask_arg(mem, term, 1)), vars, dirs, id_to_name_data)
 		break
 	case APP:
-		stk_push(chrs, '(')
+		chrs = append(chrs, '(')
 		readback_term(chrs, mem, Lnk(ask_arg(mem, term, 0)), vars, dirs, id_to_name_data)
-		stk_push(chrs, ' ')
+		chrs = append(chrs, ' ')
 		readback_term(chrs, mem, Lnk(ask_arg(mem, term, 1)), vars, dirs, id_to_name_data)
-		stk_push(chrs, ')')
+		chrs = append(chrs, ')')
 		break
 	case PAR:
 		col := get_ext(term)
@@ -886,17 +887,17 @@ func readback_term(chrs Stk, mem *Worker, term Lnk, vars Stk, dirs []Stk, id_to_
 			head := stk_pop(dirs[col])
 			if head == 0 {
 				readback_term(chrs, mem, Lnk(ask_arg(mem, term, 0)), vars, dirs, id_to_name_data)
-				stk_push(dirs[col], head)
+				dirs[col] = append(dirs[col], head)
 			} else {
 				readback_term(chrs, mem, Lnk(ask_arg(mem, term, 1)), vars, dirs, id_to_name_data)
-				stk_push(dirs[col], head)
+				dirs[col] = append(dirs[col], head)
 			}
 		} else {
-			stk_push(chrs, '<')
+			chrs = append(chrs, '<')
 			readback_term(chrs, mem, Lnk(ask_arg(mem, term, 0)), vars, dirs, id_to_name_data)
-			stk_push(chrs, ' ')
+			chrs = append(chrs, ' ')
 			readback_term(chrs, mem, Lnk(ask_arg(mem, term, 1)), vars, dirs, id_to_name_data)
-			stk_push(chrs, '>')
+			chrs = append(chrs, '>')
 		}
 		break
 	case DP0:
@@ -907,52 +908,52 @@ func readback_term(chrs Stk, mem *Worker, term Lnk, vars Stk, dirs []Stk, id_to_
 		if get_tag(term) != DP0 {
 			pushVal = 1
 		}
-		stk_push(dirs[col], u64(pushVal))
+		dirs[col] = append(dirs[col], u64(pushVal))
 		readback_term(chrs, mem, Lnk(ask_arg(mem, term, 2)), vars, dirs, id_to_name_data)
 		stk_pop(dirs[col])
 		break
 	case OP2:
-		stk_push(chrs, '(')
+		chrs = append(chrs, '(')
 		readback_term(chrs, mem, Lnk(ask_arg(mem, term, 0)), vars, dirs, id_to_name_data)
 		switch get_ext(term) {
 		case ADD:
-			stk_push(chrs, '+')
+			chrs = append(chrs, '+')
 		case SUB:
-			stk_push(chrs, '-')
+			chrs = append(chrs, '-')
 		case MUL:
-			stk_push(chrs, '*')
+			chrs = append(chrs, '*')
 		case DIV:
-			stk_push(chrs, '/')
+			chrs = append(chrs, '/')
 		case MOD:
-			stk_push(chrs, '%')
+			chrs = append(chrs, '%')
 		case AND:
-			stk_push(chrs, '&')
+			chrs = append(chrs, '&')
 		case OR:
-			stk_push(chrs, '|')
+			chrs = append(chrs, '|')
 		case XOR:
-			stk_push(chrs, '^')
+			chrs = append(chrs, '^')
 		case SHL:
-			stk_push(chrs, '<')
-			stk_push(chrs, '<')
+			chrs = append(chrs, '<')
+			chrs = append(chrs, '<')
 		case SHR:
-			stk_push(chrs, '>')
-			stk_push(chrs, '>')
+			chrs = append(chrs, '>')
+			chrs = append(chrs, '>')
 		case LTN:
-			stk_push(chrs, '<')
+			chrs = append(chrs, '<')
 		case LTE:
-			stk_push(chrs, '<')
-			stk_push(chrs, '=')
+			chrs = append(chrs, '<')
+			chrs = append(chrs, '=')
 		case EQL:
-			stk_push(chrs, '=')
-			stk_push(chrs, '=')
+			chrs = append(chrs, '=')
+			chrs = append(chrs, '=')
 		case GTE:
-			stk_push(chrs, '>')
-			stk_push(chrs, '=')
+			chrs = append(chrs, '>')
+			chrs = append(chrs, '=')
 		case GTN:
-			stk_push(chrs, '>')
+			chrs = append(chrs, '>')
 		case NEQ:
-			stk_push(chrs, '!')
-			stk_push(chrs, '=')
+			chrs = append(chrs, '!')
+			chrs = append(chrs, '=')
 		}
 		readback_term(chrs, mem, Lnk(ask_arg(mem, term, 1)), vars, dirs, id_to_name_data)
 	case U32:
@@ -961,25 +962,25 @@ func readback_term(chrs Stk, mem *Worker, term Lnk, vars Stk, dirs []Stk, id_to_
 	case CAL:
 		fun := get_ext(term)
 		ari := get_ari(term)
-		stk_push(chrs, '(')
+		chrs = append(chrs, '(')
 		if int(fun) < len(id_to_name_data) && id_to_name_data[fun] != "" {
 			for _, v := range id_to_name_data[fun] {
-				stk_push(chrs, u64(v))
+				chrs = append(chrs, u64(v))
 			}
 		} else {
-			stk_push(chrs, '$')
+			chrs = append(chrs, '$')
 			readback_decimal(chrs, fun)
 		}
 		for i := u64(0); i < ari; i++ {
-			stk_push(chrs, ' ')
+			chrs = append(chrs, ' ')
 			readback_term(chrs, mem, Lnk(ask_arg(mem, term, i)), vars, dirs, id_to_name_data)
 		}
-		stk_push(chrs, ')')
+		chrs = append(chrs, ')')
 	case VAR:
-		stk_push(chrs, 'x')
+		chrs = append(chrs, 'x')
 		readback_decimal(chrs, stk_find(vars, u64(term)))
 	default:
-		stk_push(chrs, '?')
+		chrs = append(chrs, '?')
 	}
 }
 
