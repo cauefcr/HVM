@@ -90,7 +90,7 @@ fn compile_code(code: &str, name: &str) -> std::io::Result<()> {
   if !name.ends_with(".hvm") {
     panic!("Input file must end with .hvm.");
   }
-  let name = format!("{}.c", &name[0..name.len() - 4]);
+  let name = format!("{}.go", &name[0..name.len() - 4]);
   compiler::compile_code_and_save(code, &name)?;
   println!("Compiled to '{}'.", name);
   Ok(())
@@ -149,8 +149,8 @@ fn run_example() -> std::io::Result<()> {
   ";
 
   // Compiles to C and saves as 'main.c'
-  compiler::compile_code_and_save(code, "main.c")?;
-  println!("Compiled to 'main.c'.");
+  compiler::compile_code_and_save(code, "main.go")?;
+  println!("Compiled to 'main.go'.");
 
   // Evaluates with interpreter
 
